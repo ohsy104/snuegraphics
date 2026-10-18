@@ -89,6 +89,12 @@
       padding:12px;
       border-radius:8px;
       background:#fff;
+      min-height:140px;
+      transition:background .15s, outline .15s;
+    }
+    .img-preview.dragover{
+      outline:3px dashed #3b9cff;
+      background: #f0fbff;
     }
     .img-preview img{
       max-width:25vw;
@@ -180,8 +186,8 @@
             <label style="margin-left:8px;font-size:12px;color:#345;">(업로드시 선택)</label>
           </div>
 
-          <div class="img-preview" id="imgPreview">
-            <div style="color:#789">이미지를 업로드하면 미리보기가 여기에 표시됩니다.</div>
+          <div class="img-preview" id="imgPreview" title="이미지를 여기로 드래그하거나 붙여넣기(Paste) 하세요">
+            <div style="color:#789">이미지를 업로드하면 미리보기가 여기에 표시됩니다. (드래그 앤 드롭 지원)</div>
           </div>
 
           <div id="predictionResult" style="margin-top:6px;font-weight:600;"></div>
@@ -241,6 +247,9 @@
 
     async function initModel(){
       try{
+        if(typeof tmImage === 'undefined'){
+          throw new Error('Teachable Machine 라이브러리 로드 실패 (tmImage 정의 안됨)');
+        }
         model = await tmImage.load(MODEL_URL, METADATA_URL);
         maxPredictions = model.getTotalClasses();
         classLabels = model.getClassLabels();
@@ -267,6 +276,14 @@
 
       document.getElementById("filePicker").addEventListener("change", handleFile);
       document.getElementById("predictBtn").addEventListener("click", handlePredict);
+
+      const imgPreview = document.getElementById('imgPreview');
+      imgPreview.addEventListener('dragover', (e)=>{ e.preventDefault(); imgPreview.classList.add('dragover'); });
+      imgPreview.addEventListener('dragleave', (e)=>{ e.preventDefault(); imgPreview.classList.remove('dragover'); });
+      imgPreview.addEventListener('drop', (e)=>{ e.preventDefault(); imgPreview.classList.remove('dragover'); handleDrop(e); });
+      imgPreview.addEventListener('click', ()=> document.getElementById('filePicker').click());
+
+      document.addEventListener('paste', handlePaste);
 
       loadGalleryFromStorage();
       updateStatsDisplay();
@@ -333,20 +350,53 @@
     let currentFile = null;
     let currentImageElement = null;
     function handleFile(e){
-      const file = e.target.files[0];
+      const file = e.target.files ? e.target.files[0] : e;
       if(!file) return;
+      showPreviewFromFile(file);
+    }
+
+    function handleDrop(e){
+      const dt = e.dataTransfer;
+      if(!dt) return;
+      const file = dt.files && dt.files[0];
+      if(file) {
+        if(!file.type.startsWith('image/')) return alert('이미지 파일만 업로드할 수 있습니다.');
+        showPreviewFromFile(file);
+      }
+    }
+
+    function handlePaste(e){
+      const items = (e.clipboardData || window.clipboardData).items;
+      if(!items) return;
+      for(let i=0;i<items.length;i++){
+        const it = items[i];
+        if(it.type && it.type.indexOf('image') !== -1){
+          const blob = it.getAsFile();
+          if(blob) { showPreviewFromFile(blob); e.preventDefault(); break; }
+        }
+      }
+    }
+
+    function showPreviewFromFile(file){
       currentFile = file;
       const imgPreview = document.getElementById("imgPreview");
       imgPreview.innerHTML = "";
       const img = document.createElement("img");
       imgPreview.appendChild(img);
       const reader = new FileReader();
-      reader.onload = () => {
-        img.src = reader.result;
-      };
+      reader.onload = () => { img.src = reader.result; };
       reader.readAsDataURL(file);
       currentImageElement = img;
       document.getElementById("predictionResult").textContent = "";
+
+      try{
+        const fp = document.getElementById('filePicker');
+        if(window.DataTransfer){
+          const dt = new DataTransfer();
+          dt.items.add(file);
+          fp.files = dt.files;
+        }
+      }catch(e){}
     }
 
     async function handlePredict(){
@@ -355,7 +405,7 @@
         return;
       }
       if(!currentImageElement){
-        alert("먼저 이미지를 선택하세요.");
+        alert("먼저 이미지를 선택하거나 드롭하세요.");
         return;
       }
       try{
@@ -365,10 +415,8 @@
         const predictedRaw = top.className;
         const prob = top.probability;
         let predictedLabel = predictedRaw;
-        let wasUncertain = false;
         if(prob < THRESHOLD){
           predictedLabel = UNCERTAIN_LABEL;
-          wasUncertain = true;
         }
 
         const actual = document.getElementById("actualLabelSelect").value;
